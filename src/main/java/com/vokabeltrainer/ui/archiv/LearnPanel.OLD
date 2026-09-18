@@ -1,0 +1,400 @@
+package com.vokabeltrainer.ui;
+
+import com.vokabeltrainer.db.DatabaseHelper;
+import com.vokabeltrainer.model.Category;
+import com.vokabeltrainer.model.Vokabel;
+
+import javax.swing.*;
+import javax.swing.table.DefaultTableModel;
+import java.awt.*;
+import java.awt.event.*;
+import java.util.*;
+import java.util.List;
+
+public class LearnPanel extends JPanel {
+    private DatabaseHelper dbHelper;
+    private VokabelTrainerApp mainApp;
+
+    private JComboBox<String> cbLearnMode;
+    private JComboBox<String> cbLearnScope;
+    private JComboBox<Category> cbKategorieFilter;
+    private JLabel lblVokabel;
+    private JTextField tfAntwort;
+    private JLabel lblFeedback;
+    private JButton btnUeberpruefen;
+    private JButton btnWeiter;
+    private JLabel lblStatistik;
+
+    private List<Vokabel> lernVokabeln = new ArrayList<>();
+    private List<Vokabel> aktuelleVokabeln = new ArrayList<>();
+    private Vokabel aktuelleVokabel;
+    private int aktuelleIndex = 0;
+    private boolean zeigeDeutsch = true; // true = Deutsch → Englisch
+    private int richtigeAntworten = 0;
+    private int falscheAntworten = 0;
+
+    // Lernmodi
+    private static final String MODE_DEUTSCH_ENGLISCH = "Deutsch → Englisch";
+    private static final String MODE_ENGLISCH_DEUTSCH = "Englisch → Deutsch";
+    private static final String MODE_ZUFALL = "Zufall";
+
+    // Lernbereiche
+    private static final String SCOPE_ALL = "Alle Vokabeln";
+    private static final String SCOPE_CATEGORY = "Nach Kategorie";
+    private static final String SCOPE_ERRORS_LANG1 = "Fehler (Deutsch→Englisch)";
+    private static final String SCOPE_ERRORS_LANG2 = "Fehler (Englisch→Deutsch)";
+    private static final String SCOPE_OLDEST = "Älteste zuerst";
+
+    public LearnPanel(DatabaseHelper dbHelper, VokabelTrainerApp mainApp) {
+        this.dbHelper = dbHelper;
+        this.mainApp = mainApp;
+        initializeUI();
+        loadCategories();
+        loadVokabeln();
+    }
+
+    private void initializeUI() {
+        setLayout(new BorderLayout(10, 10));
+        setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
+
+        // Oberes Panel für Einstellungen
+        JPanel settingsPanel = createSettingsPanel();
+        add(settingsPanel, BorderLayout.NORTH);
+
+        // Mittleres Panel für Lernvorgang
+        JPanel learnPanel = createLearnPanel();
+        add(learnPanel, BorderLayout.CENTER);
+
+        // Unteres Panel für Statistik
+        JPanel statsPanel = createStatsPanel();
+        add(statsPanel, BorderLayout.SOUTH);
+    }
+
+    private JPanel createSettingsPanel() {
+        JPanel panel = new JPanel(new GridBagLayout());
+        panel.setBorder(BorderFactory.createTitledBorder("Lerneinstellungen"));
+
+        GridBagConstraints gbc = new GridBagConstraints();
+        gbc.insets = new Insets(5, 5, 5, 5);
+        gbc.fill = GridBagConstraints.HORIZONTAL;
+
+        // Lernmodus
+        gbc.gridx = 0; gbc.gridy = 0;
+        panel.add(new JLabel("Lernmodus:"), gbc);
+        gbc.gridx = 1; gbc.weightx = 1;
+        cbLearnMode = new JComboBox<>(new String[]{MODE_DEUTSCH_ENGLISCH, MODE_ENGLISCH_DEUTSCH, MODE_ZUFALL});
+        cbLearnMode.addActionListener(e -> updateLearnMode());
+        panel.add(cbLearnMode, gbc);
+
+        // Lernbereich
+        gbc.gridx = 2; gbc.gridy = 0; gbc.weightx = 0;
+        panel.add(new JLabel("Lernbereich:"), gbc);
+        gbc.gridx = 3; gbc.weightx = 1;
+        cbLearnScope = new JComboBox<>(new String[]{SCOPE_ALL, SCOPE_CATEGORY, SCOPE_ERRORS_LANG1, SCOPE_ERRORS_LANG2, SCOPE_OLDEST});
+        cbLearnScope.addActionListener(e -> updateLearnScope());
+        panel.add(cbLearnScope, gbc);
+
+        // Kategorie Filter
+        gbc.gridx = 4; gbc.gridy = 0; gbc.weightx = 0;
+        panel.add(new JLabel("Kategorie:"), gbc);
+        gbc.gridx = 5; gbc.weightx = 1;
+        cbKategorieFilter = new JComboBox<>();
+        cbKategorieFilter.addActionListener(e -> loadVokabeln());
+        panel.add(cbKategorieFilter, gbc);
+
+        // Buttons
+        gbc.gridx = 6; gbc.gridy = 0; gbc.weightx = 0; gbc.fill = GridBagConstraints.NONE;
+        JButton btnStart = new JButton("Start");
+        btnStart.addActionListener(e -> startLearning());
+        panel.add(btnStart, gbc);
+
+        gbc.gridx = 7;
+        JButton btnReset = new JButton("Zurücksetzen");
+        btnReset.addActionListener(e -> resetLearning());
+        panel.add(btnReset, gbc);
+
+        return panel;
+    }
+
+    private JPanel createLearnPanel() {
+        JPanel panel = new JPanel(new GridBagLayout());
+        panel.setBorder(BorderFactory.createTitledBorder("Lernvorgang"));
+
+        GridBagConstraints gbc = new GridBagConstraints();
+        gbc.insets = new Insets(10, 10, 10, 10);
+        gbc.fill = GridBagConstraints.HORIZONTAL;
+
+        // Vokabel-Anzeige
+        gbc.gridx = 0; gbc.gridy = 0; gbc.gridwidth = 2;
+        lblVokabel = new JLabel("Klicken Sie auf 'Start', um zu beginnen.", SwingConstants.CENTER);
+        lblVokabel.setFont(new Font("Arial", Font.BOLD, 24));
+        panel.add(lblVokabel, gbc);
+
+        // Antwortfeld
+        gbc.gridx = 0; gbc.gridy = 1; gbc.gridwidth = 2;
+        tfAntwort = new JTextField(30);
+        tfAntwort.setFont(new Font("Arial", Font.PLAIN, 18));
+        tfAntwort.addKeyListener(new KeyAdapter() {
+            @Override
+            public void keyPressed(KeyEvent e) {
+                if (e.getKeyCode() == KeyEvent.VK_ENTER) {
+                    checkAnswer();
+                }
+            }
+        });
+        panel.add(tfAntwort, gbc);
+
+        // Feedback
+        gbc.gridx = 0; gbc.gridy = 2; gbc.gridwidth = 2;
+        lblFeedback = new JLabel("", SwingConstants.CENTER);
+        lblFeedback.setFont(new Font("Arial", Font.BOLD, 16));
+        panel.add(lblFeedback, gbc);
+
+        // Buttons
+        gbc.gridx = 0; gbc.gridy = 3; gbc.gridwidth = 1; gbc.fill = GridBagConstraints.NONE;
+        btnUeberpruefen = new JButton("Überprüfen");
+        btnUeberpruefen.addActionListener(e -> checkAnswer());
+        panel.add(btnUeberpruefen, gbc);
+
+        gbc.gridx = 1;
+        btnWeiter = new JButton("Weiter");
+        btnWeiter.addActionListener(e -> nextVokabel());
+        btnWeiter.setEnabled(false);
+        panel.add(btnWeiter, gbc);
+
+        return panel;
+    }
+
+    private JPanel createStatsPanel() {
+        JPanel panel = new JPanel(new FlowLayout(FlowLayout.LEFT));
+        panel.setBorder(BorderFactory.createTitledBorder("Statistik"));
+        lblStatistik = new JLabel("Richtig: 0 | Falsch: 0 | Gelernte: 0/0");
+        panel.add(lblStatistik);
+        return panel;
+    }
+
+    private void loadCategories() {
+        SwingUtilities.invokeLater(() -> {
+            List<Category> categories = dbHelper.getAllCategories();
+            cbKategorieFilter.removeAllItems();
+            cbKategorieFilter.addItem(new Category(0, "Alle")); // Dummy für "Alle"
+            for (Category cat : categories) {
+                cbKategorieFilter.addItem(cat);
+            }
+        });
+    }
+
+    private void updateLearnMode() {
+        String mode = (String) cbLearnMode.getSelectedItem();
+        zeigeDeutsch = MODE_DEUTSCH_ENGLISCH.equals(mode) || MODE_ZUFALL.equals(mode);
+    }
+
+    private void updateLearnScope() {
+        String scope = (String) cbLearnScope.getSelectedItem();
+        boolean enableCategory = SCOPE_CATEGORY.equals(scope) ||
+                               SCOPE_ERRORS_LANG1.equals(scope) ||
+                               SCOPE_ERRORS_LANG2.equals(scope);
+        cbKategorieFilter.setEnabled(enableCategory);
+    }
+
+    private void loadVokabeln() {
+        String scope = (String) cbLearnScope.getSelectedItem();
+        Category selectedCategory = (Category) cbKategorieFilter.getSelectedItem();
+
+        SwingUtilities.invokeLater(() -> {
+            switch (scope) {
+                case SCOPE_ALL:
+                    lernVokabeln = dbHelper.getAllVokabeln();
+                    break;
+                case SCOPE_CATEGORY:
+                    if (selectedCategory.getId() == 0) {
+                        lernVokabeln = dbHelper.getAllVokabeln();
+                    } else {
+                        lernVokabeln = dbHelper.getVokabelnByCategoryName(selectedCategory.getName());
+                    }
+                    break;
+                case SCOPE_ERRORS_LANG1:
+                    if (selectedCategory.getId() == 0) {
+                        lernVokabeln = dbHelper.getErrorVokabeln(true);
+                    } else {
+                        lernVokabeln = filterByCategory(dbHelper.getErrorVokabeln(true), selectedCategory.getName());
+                    }
+                    break;
+                case SCOPE_ERRORS_LANG2:
+                    if (selectedCategory.getId() == 0) {
+                        lernVokabeln = dbHelper.getErrorVokabeln(false);
+                    } else {
+                        lernVokabeln = filterByCategory(dbHelper.getErrorVokabeln(false), selectedCategory.getName());
+                    }
+                    break;
+                case SCOPE_OLDEST:
+                    lernVokabeln = dbHelper.getAllVokabeln();
+                    lernVokabeln.sort(Comparator.comparingLong(Vokabel::getLastReviewed));
+                    if (selectedCategory.getId() != 0) {
+                        lernVokabeln = filterByCategory(lernVokabeln, selectedCategory.getName());
+                    }
+                    break;
+            }
+
+            Collections.shuffle(lernVokabeln);
+            aktuelleVokabeln = new ArrayList<>(lernVokabeln);
+            updateStatistik();
+        });
+    }
+
+    private List<Vokabel> filterByCategory(List<Vokabel> vokabeln, String categoryName) {
+        List<Vokabel> filtered = new ArrayList<>();
+        for (Vokabel v : vokabeln) {
+            for (Category cat : v.getCategories()) {
+                if (cat.getName().equals(categoryName)) {
+                    filtered.add(v);
+                    break;
+                }
+            }
+        }
+        return filtered;
+    }
+
+    private void startLearning() {
+        if (aktuelleVokabeln.isEmpty()) {
+            loadVokabeln();
+            if (aktuelleVokabeln.isEmpty()) {
+                JOptionPane.showMessageDialog(this, "Keine Vokabeln zum Lernen verfügbar!",
+                                            "Fehler", JOptionPane.ERROR_MESSAGE);
+                return;
+            }
+        }
+
+        updateLearnMode();
+        aktuelleIndex = 0;
+        nextVokabel();
+        richtigeAntworten = 0;
+        falscheAntworten = 0;
+        updateStatistik();
+    }
+
+    private void nextVokabel() {
+        if (aktuelleVokabeln.isEmpty()) {
+            lblVokabel.setText("Keine Vokabeln mehr zum Lernen. Bitte wählen Sie einen anderen Bereich.");
+            tfAntwort.setText("");
+            tfAntwort.setEnabled(false);
+            btnUeberpruefen.setEnabled(false);
+            btnWeiter.setEnabled(false);
+            lblFeedback.setText("");
+            return;
+        }
+
+        aktuelleVokabel = aktuelleVokabeln.get(aktuelleIndex);
+        String mode = (String) cbLearnMode.getSelectedItem();
+        if (MODE_ZUFALL.equals(mode)) {
+            zeigeDeutsch = Math.random() < 0.5;
+        }
+
+        // Anzeige basierend auf Lernmodus
+        String displayText;
+        if (zeigeDeutsch) {
+            displayText = aktuelleVokabel.getDeutsch();
+        } else {
+            displayText = aktuelleVokabel.getEnglisch();
+        }
+
+        // Kategorien anhängen
+        String categories = String.join(", ", aktuelleVokabel.getCategories().stream()
+            .map(Category::getName).toArray(String[]::new));
+        if (!categories.isEmpty()) {
+            displayText += " [" + categories + "]";
+        }
+
+        lblVokabel.setText(displayText);
+        tfAntwort.setText("");
+        tfAntwort.setEnabled(true);
+        tfAntwort.requestFocus();
+        btnUeberpruefen.setEnabled(true);
+        btnWeiter.setEnabled(false);
+        lblFeedback.setText("");
+    }
+
+    private void checkAnswer() {
+        if (aktuelleVokabel == null) return;
+
+        String antwort = tfAntwort.getText().trim().toLowerCase();
+        String korrekteAntwort = zeigeDeutsch ?
+            aktuelleVokabel.getEnglisch().toLowerCase() :
+            aktuelleVokabel.getDeutsch().toLowerCase();
+
+        if (antwort.equals(korrekteAntwort)) {
+            // Richtige Antwort
+            aktuelleVokabel.incrementErrorCount(zeigeDeutsch);
+            dbHelper.updateVokabel(aktuelleVokabel);
+
+            lblFeedback.setText("✓ Richtig!");
+            lblFeedback.setForeground(Color.GREEN);
+            richtigeAntworten++;
+
+            // Wenn keine Fehler mehr in dieser Richtung, aus der Liste entfernen
+            boolean shouldRemove = zeigeDeutsch ?
+                !aktuelleVokabel.isErrorLang1() :
+                !aktuelleVokabel.isErrorLang2();
+
+            if (shouldRemove) {
+                aktuelleVokabeln.remove(aktuelleIndex);
+                if (aktuelleIndex >= aktuelleVokabeln.size()) {
+                    aktuelleIndex = 0;
+                }
+            } else {
+                aktuelleIndex++;
+            }
+        } else {
+            // Falsche Antwort
+            aktuelleVokabel.decrementErrorCount(zeigeDeutsch);
+            dbHelper.updateVokabel(aktuelleVokabel);
+
+            lblFeedback.setText("✗ Falsch! Richtige Antwort: " + korrekteAntwort);
+            lblFeedback.setForeground(Color.RED);
+            falscheAntworten++;
+
+            // Vokabel bleibt in der Liste für Wiederholung
+            aktuelleIndex++;
+        }
+
+        tfAntwort.setEnabled(false);
+        btnUeberpruefen.setEnabled(false);
+        btnWeiter.setEnabled(true);
+        updateStatistik();
+    }
+
+    private void updateStatistik() {
+        int total = dbHelper.getVokabelCount();
+        int errorLang1 = dbHelper.getErrorCount(true);
+        int errorLang2 = dbHelper.getErrorCount(false);
+
+        String statText = String.format(
+            "Richtig: %d | Falsch: %d | Aktuell: %d/%d | Fehler (D→E): %d | Fehler (E→D): %d",
+            richtigeAntworten, falscheAntworten,
+            aktuelleVokabeln.size(), lernVokabeln.size(),
+            errorLang1, errorLang2
+        );
+
+        lblStatistik.setText(statText);
+    }
+
+    private void resetLearning() {
+        if (JOptionPane.showConfirmDialog(this,
+            "Möchten Sie den Lernstatus ALLER Vokabeln zurücksetzen?",
+            "Zurücksetzen", JOptionPane.YES_NO_OPTION) == JOptionPane.YES_OPTION) {
+
+            if (dbHelper.resetAllLearningStatus()) {
+                loadVokabeln();
+                startLearning();
+                JOptionPane.showMessageDialog(this, "Lernstatus zurückgesetzt!",
+                                            "Erfolg", JOptionPane.INFORMATION_MESSAGE);
+            }
+        }
+    }
+
+    public void refreshData() {
+        loadCategories();
+        loadVokabeln();
+        updateStatistik();
+    }
+}
