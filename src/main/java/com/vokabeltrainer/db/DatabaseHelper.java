@@ -12,15 +12,19 @@ public class DatabaseHelper {
     private Connection connection;
 
     public DatabaseHelper() {
-        connect();
+        this(DB_URL);
+    }
+
+    public DatabaseHelper(String dbUrl) {
+        connect(dbUrl);
         createTables();
     }
 
     // ============ VERBINDUNG & TABELLEN ============
-    private void connect() {
+    private void connect(String dbUrl) {
         try {
             Class.forName("org.sqlite.JDBC");
-            this.connection = DriverManager.getConnection(DB_URL);
+            this.connection = DriverManager.getConnection(dbUrl);
         } catch (ClassNotFoundException | SQLException e) {
             System.err.println("Datenbankfehler: " + e.getMessage());
         }
